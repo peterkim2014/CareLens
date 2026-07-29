@@ -6,9 +6,27 @@ from app.ai.retrieval.semantic.schemas import (
 )
 
 
-class VectorRepository(Protocol):
+class VectorSearchRepository(Protocol):
+    def search(
+        self,
+        query_embedding: list[float],
+        *,
+        limit: int,
+    ) -> list[SemanticSearchResult]:
+        """Return the closest semantic matches."""
+        ...
+
+
+class VectorRepository(
+    VectorSearchRepository,
+    Protocol,
+):
     def clear(self) -> None:
-        """Remove all stored embeddings."""
+        """Remove every stored embedding."""
+        ...
+
+    def count(self) -> int:
+        """Return the number of stored embeddings."""
         ...
 
     def upsert(
@@ -29,18 +47,26 @@ class VectorRepository(Protocol):
         self,
         document_id: str,
     ) -> bool:
-        """Delete an embedding by document ID."""
+        """Delete one embedding."""
         ...
 
-    def search(
+    def delete_many(
         self,
-        query_embedding: list[float],
-        *,
-        limit: int,
-    ) -> list[SemanticSearchResult]:
-        """Return the closest semantic matches."""
+        document_ids: set[str],
+    ) -> int:
+        """Delete multiple embeddings."""
         ...
 
+    def list_document_ids(self) -> set[str]:
+        """Return every indexed document ID."""
+        ...
 
-# Backward-compatible name used by service.py and __init__.py.
-VectorSearchRepository = VectorRepository
+    def contains_current_embedding(
+        self,
+        document_id: str,
+        *,
+        embedding_model: str,
+        content_hash: str,
+    ) -> bool:
+        """Determine whether an unchanged embedding exists."""
+        ...

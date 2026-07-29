@@ -16,6 +16,10 @@ class FakeEmbedder:
         self.received_text: str | None = None
         self.received_texts: list[str] | None = None
 
+    @property
+    def model_name(self) -> str:
+        return "test-embedder"
+
     def embed(
         self,
         text: str,

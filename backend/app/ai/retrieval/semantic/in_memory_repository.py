@@ -1,4 +1,5 @@
 import math
+from collections.abc import Iterable
 
 from app.ai.retrieval.semantic.schemas import (
     EmbeddingRecord,
@@ -9,12 +10,20 @@ from app.ai.retrieval.semantic.schemas import (
 class InMemoryVectorRepository:
     def __init__(
         self,
-        records: list[EmbeddingRecord] | None = None,
+        records: Iterable[EmbeddingRecord] | None = None,
     ) -> None:
-        self._embeddings: dict[str, list[float]] = {}
+        self._embeddings: dict[str, EmbeddingRecord] = {}
 
         if records is not None:
-            self.upsert_many(records)
+            self.upsert_many(
+                list(records),
+            )
+
+    def clear(self) -> None:
+        self._embeddings.clear()
+
+    def count(self) -> int:
+        return len(self._embeddings)
 
     def upsert(
         self,
@@ -24,15 +33,19 @@ class InMemoryVectorRepository:
 
         if not normalized_document_id:
             raise ValueError(
-                "document_id cannot be blank.",
+                "document_id cannot be empty",
             )
 
-        self._validate_embedding(
-            record.embedding,
-        )
+        if not record.embedding:
+            raise ValueError(
+                "embedding cannot be empty",
+            )
 
-        self._embeddings[normalized_document_id] = list(
-            record.embedding,
+        self._embeddings[normalized_document_id] = EmbeddingRecord(
+            document_id=normalized_document_id,
+            embedding=list(record.embedding),
+            embedding_model=record.embedding_model,
+            content_hash=record.content_hash,
         )
 
     def upsert_many(
@@ -40,7 +53,9 @@ class InMemoryVectorRepository:
         records: list[EmbeddingRecord],
     ) -> None:
         for record in records:
-            self.upsert(record)
+            self.upsert(
+                record,
+            )
 
     def delete(
         self,
@@ -59,50 +74,75 @@ class InMemoryVectorRepository:
             is not None
         )
 
-    def clear(self) -> None:
-        self._embeddings.clear()
+    def delete_many(
+        self,
+        document_ids: set[str],
+    ) -> int:
+        deleted_count = 0
 
-    def count(self) -> int:
-        return len(self._embeddings)
+        for document_id in document_ids:
+            if self.delete(document_id):
+                deleted_count += 1
+
+        return deleted_count
+
+    def list_document_ids(self) -> set[str]:
+        return set(
+            self._embeddings,
+        )
+
+    def contains_current_embedding(
+        self,
+        document_id: str,
+        *,
+        embedding_model: str,
+        content_hash: str,
+    ) -> bool:
+        normalized_document_id = document_id.strip()
+
+        record = self._embeddings.get(
+            normalized_document_id,
+        )
+
+        if record is None:
+            return False
+
+        return (
+            record.embedding_model == embedding_model
+            and record.content_hash == content_hash
+        )
 
     def search(
         self,
-        embedding: list[float],
+        query_embedding: list[float],
         *,
         limit: int,
     ) -> list[SemanticSearchResult]:
         if limit < 1:
             raise ValueError(
-                "limit must be at least 1.",
+                "limit must be greater than zero",
             )
 
-        self._validate_embedding(
-            embedding,
-        )
+        if not query_embedding:
+            return []
 
         results: list[SemanticSearchResult] = []
 
-        for document_id, stored_embedding in self._embeddings.items():
-            if len(stored_embedding) != len(embedding):
+        for record in self._embeddings.values():
+            if len(record.embedding) != len(
+                query_embedding,
+            ):
                 continue
 
-            cosine_similarity = _cosine_similarity(
-                embedding,
-                stored_embedding,
-            )
-
-            normalized_score = max(
-                0.0,
-                min(
-                    (cosine_similarity + 1.0) / 2.0,
-                    1.0,
-                ),
+            similarity = _cosine_similarity(
+                query_embedding,
+                record.embedding,
             )
 
             results.append(
                 SemanticSearchResult(
-                    document_id=document_id,
-                    similarity=normalized_score,
+                    document_id=record.document_id,
+                    similarity=similarity,
                 )
             )
 
@@ -115,38 +155,25 @@ class InMemoryVectorRepository:
 
         return results[:limit]
 
-    @staticmethod
-    def _validate_embedding(
-        embedding: list[float],
-    ) -> None:
-        if not embedding:
-            raise ValueError(
-                "embedding cannot be empty.",
-            )
-
-        if not all(math.isfinite(value) for value in embedding):
-            raise ValueError(
-                "embedding values must be finite.",
-            )
-
 
 def _cosine_similarity(
-    first: list[float],
-    second: list[float],
+    left: list[float],
+    right: list[float],
 ) -> float:
     dot_product = sum(
-        first_value * second_value
-        for first_value, second_value in zip(
-            first,
-            second,
+        left_value * right_value
+        for left_value, right_value in zip(
+            left,
+            right,
             strict=True,
         )
     )
 
-    first_magnitude = math.sqrt(sum(value * value for value in first))
-    second_magnitude = math.sqrt(sum(value * value for value in second))
+    left_magnitude = math.sqrt(sum(value * value for value in left))
 
-    if first_magnitude == 0.0 or second_magnitude == 0.0:
+    right_magnitude = math.sqrt(sum(value * value for value in right))
+
+    if left_magnitude == 0.0 or right_magnitude == 0.0:
         return 0.0
 
-    return dot_product / (first_magnitude * second_magnitude)
+    return dot_product / (left_magnitude * right_magnitude)

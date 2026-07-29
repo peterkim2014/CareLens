@@ -42,13 +42,24 @@ class SemanticIndexingService:
     ) -> SemanticIndexingResult:
         documents = self._evidence_repository.list_documents()
 
-        indexable_documents: list[
+        current_document_ids = {document.document_id for document in documents}
+
+        stored_document_ids = self._vector_repository.list_document_ids()
+
+        stale_document_ids = stored_document_ids - current_document_ids
+
+        self._vector_repository.delete_many(
+            stale_document_ids,
+        )
+
+        documents_to_index: list[
             tuple[
                 EvidenceDocument,
                 str,
                 str,
             ]
         ] = []
+
         skipped_documents = 0
 
         for document in documents:
@@ -60,13 +71,23 @@ class SemanticIndexingService:
                 skipped_documents += 1
                 continue
 
-            indexable_documents.append(
+            content_hash = _create_content_hash(
+                embedding_text,
+            )
+
+            if self._vector_repository.contains_current_embedding(
+                document.document_id,
+                embedding_model=self._embedder.model_name,
+                content_hash=content_hash,
+            ):
+                skipped_documents += 1
+                continue
+
+            documents_to_index.append(
                 (
                     document,
                     embedding_text,
-                    _create_content_hash(
-                        embedding_text,
-                    ),
+                    content_hash,
                 )
             )
 
@@ -74,10 +95,10 @@ class SemanticIndexingService:
 
         for batch_start in range(
             0,
-            len(indexable_documents),
+            len(documents_to_index),
             self._batch_size,
         ):
-            batch = indexable_documents[batch_start : batch_start + self._batch_size]
+            batch = documents_to_index[batch_start : batch_start + self._batch_size]
 
             texts = [
                 embedding_text
@@ -114,12 +135,10 @@ class SemanticIndexingService:
                     EmbeddingRecord(
                         document_id=document.document_id,
                         embedding=embedding,
-                        embedding_model=self._embedder.model_name,
+                        embedding_model=(self._embedder.model_name),
                         content_hash=content_hash,
                     )
                 )
-
-        self._vector_repository.clear()
 
         self._vector_repository.upsert_many(
             records,

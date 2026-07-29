@@ -35,6 +35,68 @@ class SQLAlchemyVectorRepository:
                 session.rollback()
                 raise
 
+    def list_document_ids(self) -> set[str]:
+        statement = select(
+            EvidenceEmbeddingModel.document_id,
+        )
+
+        with self._session_factory() as session:
+            document_ids = session.execute(
+                statement,
+            ).scalars()
+
+            return set(document_ids)
+
+    def count(self) -> int:
+        statement = select(
+            func.count(
+                EvidenceEmbeddingModel.document_id,
+            )
+        )
+
+        with self._session_factory() as session:
+            return session.execute(
+                statement,
+            ).scalar_one()
+
+    def delete_many(
+        self,
+        document_ids: set[str],
+    ) -> int:
+        if not document_ids:
+            return 0
+
+        statement = (
+            delete(
+                EvidenceEmbeddingModel,
+            )
+            .where(
+                EvidenceEmbeddingModel.document_id.in_(
+                    document_ids,
+                )
+            )
+            .returning(
+                EvidenceEmbeddingModel.document_id,
+            )
+        )
+
+        with self._session_factory() as session:
+            try:
+                deleted_document_ids = (
+                    session.execute(
+                        statement,
+                    )
+                    .scalars()
+                    .all()
+                )
+
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+
+        return len(deleted_document_ids)
+
     def upsert(
         self,
         record: EmbeddingRecord,

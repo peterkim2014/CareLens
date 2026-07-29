@@ -38,7 +38,7 @@ def test_repository_replaces_existing_record() -> None:
             document_id="allergy-001",
             embedding=[0.0, 1.0],
             embedding_model="hashing",
-            content_hash="test-hash",            
+            content_hash="test-hash",
         )
     )
 

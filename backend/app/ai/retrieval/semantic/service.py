@@ -12,6 +12,7 @@ from app.ai.retrieval.semantic.schemas import (
 class SemanticRetrievalService:
     def __init__(
         self,
+        *,
         embedder: Embedder,
         repository: VectorSearchRepository,
     ) -> None:
