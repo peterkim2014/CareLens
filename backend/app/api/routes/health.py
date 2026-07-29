@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 
 from fastapi import (
@@ -19,6 +20,7 @@ router = APIRouter(
 SemanticRetrievalStatus = Literal[
     "disabled",
     "available",
+    "cooldown",
     "unavailable",
 ]
 
@@ -28,8 +30,13 @@ class HealthResponse(BaseModel):
     service: str
     version: str
     environment: str
+
     semantic_retrieval_enabled: bool
     semantic_retrieval_status: SemanticRetrievalStatus
+    semantic_retrieval_error: str | None
+    semantic_last_failure_at: datetime | None
+    semantic_last_recovery_attempt_at: datetime | None
+    semantic_recovery_cooldown_seconds: float
 
 
 @router.get(
@@ -49,9 +56,18 @@ async def health_check(
     )
 
     semantic_status = _get_semantic_retrieval_status(
-        enabled=(settings.semantic_retrieval_enabled),
+        enabled=settings.semantic_retrieval_enabled,
         runtime=semantic_runtime,
     )
+
+    semantic_error: str | None = None
+    semantic_last_failure_at: datetime | None = None
+    semantic_last_recovery_attempt_at: datetime | None = None
+
+    if semantic_runtime is not None:
+        semantic_error = semantic_runtime.startup_error
+        semantic_last_failure_at = semantic_runtime.last_failure_at
+        semantic_last_recovery_attempt_at = semantic_runtime.last_recovery_attempt_at
 
     return HealthResponse(
         status="healthy",
@@ -59,7 +75,13 @@ async def health_check(
         version=settings.app_version,
         environment=settings.environment,
         semantic_retrieval_enabled=(settings.semantic_retrieval_enabled),
-        semantic_retrieval_status=(semantic_status),
+        semantic_retrieval_status=semantic_status,
+        semantic_retrieval_error=semantic_error,
+        semantic_last_failure_at=(semantic_last_failure_at),
+        semantic_last_recovery_attempt_at=(semantic_last_recovery_attempt_at),
+        semantic_recovery_cooldown_seconds=(
+            settings.semantic_recovery_cooldown_seconds
+        ),
     )
 
 
@@ -77,4 +99,7 @@ def _get_semantic_retrieval_status(
     if runtime.is_available:
         return "available"
 
-    return "unavailable"
+    if runtime.should_attempt_recovery():
+        return "unavailable"
+
+    return "cooldown"
