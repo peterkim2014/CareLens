@@ -27,6 +27,9 @@ from app.ai.retrieval.sqlalchemy_repository import (
     SQLAlchemyEvidenceRepository,
 )
 from app.api.routes import api_router
+from app.api.routes.prometheus import (
+    router as prometheus_router,
+)
 from app.core.config import get_settings
 from app.core.errors import (
     AnalysisPipelineError,
@@ -78,7 +81,7 @@ async def lifespan(
                 semantic_runtime = build_semantic_runtime(
                     evidence_repository,
                     embedder=embedder,
-                    vector_repository=vector_repository,
+                    vector_repository=(vector_repository),
                     batch_size=(settings.semantic_embedding_batch_size),
                     recovery_cooldown_seconds=(
                         settings.semantic_recovery_cooldown_seconds
@@ -172,6 +175,10 @@ def create_app() -> FastAPI:
     )
 
     application.include_router(
+        prometheus_router,
+    )
+
+    application.include_router(
         api_router,
         prefix=settings.api_prefix,
     )
@@ -203,7 +210,7 @@ def register_exception_handlers(
         logger.warning(
             "Request validation failed",
             extra={
-                "event": "request_validation_failed",
+                "event": ("request_validation_failed"),
                 "error_count": len(
                     exception.errors(),
                 ),
