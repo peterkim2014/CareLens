@@ -6,6 +6,7 @@ from app.ai.retrieval import (
 from app.ai.retrieval.semantic.schemas import (
     SemanticSearchResult,
 )
+from app.core.metrics import RetrievalMetrics
 
 
 class FailingSemanticRetriever:
@@ -78,6 +79,93 @@ def create_service() -> RetrievalService:
         minimum_score=0.1,
         maximum_results=5,
     )
+
+
+def test_retrieval_records_lexical_request() -> None:
+    metrics = RetrievalMetrics()
+
+    repository = InMemoryEvidenceRepository(
+        documents=[],
+    )
+
+    service = RetrievalService(
+        repository=repository,
+        metrics=metrics,
+    )
+
+    service.retrieve(
+        "allergy symptoms",
+    )
+
+    snapshot = metrics.snapshot()
+
+    assert snapshot.total_requests == 1
+    assert snapshot.semantic_attempts == 0
+    assert snapshot.semantic_successes == 0
+    assert snapshot.semantic_failures == 0
+    assert snapshot.lexical_fallbacks == 0
+
+
+def test_retrieval_records_semantic_success() -> None:
+    metrics = RetrievalMetrics()
+
+    repository = InMemoryEvidenceRepository(
+        documents=[],
+    )
+
+    semantic_retriever = FakeSemanticRetriever(
+        results=[],
+    )
+
+    service = RetrievalService(
+        repository=repository,
+        semantic_retriever=semantic_retriever,
+        metrics=metrics,
+    )
+
+    service.retrieve(
+        "allergy symptoms",
+    )
+
+    snapshot = metrics.snapshot()
+
+    assert snapshot.total_requests == 1
+    assert snapshot.semantic_attempts == 1
+    assert snapshot.semantic_successes == 1
+    assert snapshot.semantic_failures == 0
+    assert snapshot.lexical_fallbacks == 0
+
+
+def test_retrieval_records_semantic_failure_and_fallback() -> None:
+    metrics = RetrievalMetrics()
+
+    repository = InMemoryEvidenceRepository(
+        documents=[],
+    )
+
+    service = RetrievalService(
+        repository=repository,
+        semantic_retriever=(
+            FailingSemanticRetriever(
+                RuntimeError(
+                    "provider unavailable",
+                )
+            )
+        ),
+        metrics=metrics,
+    )
+
+    service.retrieve(
+        "allergy symptoms",
+    )
+
+    snapshot = metrics.snapshot()
+
+    assert snapshot.total_requests == 1
+    assert snapshot.semantic_attempts == 1
+    assert snapshot.semantic_successes == 0
+    assert snapshot.semantic_failures == 1
+    assert snapshot.lexical_fallbacks == 1
 
 
 def test_semantic_failure_falls_back_to_lexical_retrieval() -> None:
@@ -215,7 +303,7 @@ def test_hybrid_retrieval_includes_semantic_match() -> None:
             EvidenceDocument(
                 document_id="sleep-001",
                 title="Sleep hygiene",
-                content="Maintain a consistent schedule.",
+                content=("Maintain a consistent schedule."),
                 source="Reference",
                 source_type="reviewed_evidence",
             ),
@@ -241,10 +329,12 @@ def test_hybrid_retrieval_includes_semantic_match() -> None:
     )
 
     assert len(result.evidence) == 1
-    assert result.evidence[0].document_id == "allergy-001"
-    assert result.evidence[0].matched_terms == ["nose"]
+    assert result.evidence[0].document_id == ("allergy-001")
+    assert result.evidence[0].matched_terms == [
+        "nose",
+    ]
 
-    assert semantic_retriever.received_query == "my nose keeps dripping"
+    assert semantic_retriever.received_query == ("my nose keeps dripping")
     assert semantic_retriever.received_limit == 5
 
 
@@ -261,7 +351,7 @@ def test_hybrid_retrieval_rewards_shared_match() -> None:
             EvidenceDocument(
                 document_id="sleep-001",
                 title="Sleep hygiene",
-                content="Maintain a sleep schedule.",
+                content=("Maintain a sleep schedule."),
                 source="Reference",
                 source_type="reviewed_evidence",
             ),
@@ -290,7 +380,7 @@ def test_hybrid_retrieval_rewards_shared_match() -> None:
         "seasonal allergies",
     )
 
-    assert result.evidence[0].document_id == "allergy-001"
+    assert result.evidence[0].document_id == ("allergy-001")
     assert result.evidence[0].score > result.evidence[1].score
 
 
@@ -336,9 +426,9 @@ def test_retrieval_returns_matching_evidence() -> None:
 
     assert result.total_candidates == 2
     assert len(result.evidence) == 1
-    assert result.evidence[0].document_id == "allergy-001"
+    assert result.evidence[0].document_id == ("allergy-001")
     assert result.evidence[0].score > 0.0
-    assert "seasonal" in result.evidence[0].matched_terms
+    assert "seasonal" in (result.evidence[0].matched_terms)
 
 
 def test_retrieval_excludes_irrelevant_documents() -> None:
@@ -399,7 +489,7 @@ def test_retrieval_handles_punctuation_and_case() -> None:
     )
 
     assert len(result.evidence) == 1
-    assert result.evidence[0].document_id == "allergy-001"
+    assert result.evidence[0].document_id == ("allergy-001")
     assert result.evidence[0].matched_terms == [
         "eyes",
         "itchy",
@@ -422,7 +512,7 @@ def test_retrieval_orders_results_by_score() -> None:
             EvidenceDocument(
                 document_id="partial",
                 title="Allergies",
-                content="Allergies can cause symptoms.",
+                content=("Allergies can cause symptoms."),
                 source="Reference",
                 source_type="clinical_reference",
             ),
@@ -499,7 +589,7 @@ def test_retrieval_uses_keyword_metadata() -> None:
     )
 
     assert len(result.evidence) == 1
-    assert result.evidence[0].document_id == "allergy-001"
+    assert result.evidence[0].document_id == ("allergy-001")
     assert result.evidence[0].matched_terms == [
         "allergies",
         "seasonal",
@@ -532,7 +622,7 @@ def test_retrieval_uses_specialty_metadata() -> None:
     )
 
     assert len(result.evidence) == 1
-    assert result.evidence[0].document_id == "cardiology-001"
+    assert result.evidence[0].document_id == ("cardiology-001")
     assert result.evidence[0].matched_terms == [
         "cardiology",
     ]
@@ -568,7 +658,7 @@ def test_title_match_ranks_above_content_match() -> None:
     )
 
     assert len(result.evidence) == 2
-    assert result.evidence[0].document_id == "title-match"
+    assert result.evidence[0].document_id == ("title-match")
     assert result.evidence[0].score > result.evidence[1].score
 
 
@@ -605,7 +695,7 @@ def test_keyword_match_ranks_above_content_match() -> None:
     )
 
     assert len(result.evidence) == 2
-    assert result.evidence[0].document_id == "keyword-match"
+    assert result.evidence[0].document_id == ("keyword-match")
 
 
 def test_equal_scores_order_by_document_id() -> None:

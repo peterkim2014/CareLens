@@ -20,6 +20,7 @@ from app.core.config import (
     Settings,
     get_settings,
 )
+from app.core.metrics import RetrievalMetrics
 
 
 def get_evidence_repository(
@@ -39,6 +40,28 @@ EvidenceRepositoryDependency = Annotated[
 SettingsDependency = Annotated[
     Settings,
     Depends(get_settings),
+]
+
+
+def get_retrieval_metrics(
+    request: Request,
+) -> RetrievalMetrics:
+    metrics: RetrievalMetrics | None = getattr(
+        request.app.state,
+        "retrieval_metrics",
+        None,
+    )
+
+    if metrics is None:
+        metrics = RetrievalMetrics()
+        request.app.state.retrieval_metrics = metrics
+
+    return metrics
+
+
+RetrievalMetricsDependency = Annotated[
+    RetrievalMetrics,
+    Depends(get_retrieval_metrics),
 ]
 
 
@@ -86,6 +109,7 @@ def get_retrieval_service(
     repository: EvidenceRepositoryDependency,
     settings: SettingsDependency,
     semantic_runtime: RecoveredSemanticRuntimeDependency,
+    metrics: RetrievalMetricsDependency,
 ) -> RetrievalService:
     semantic_retriever = None
     semantic_failure_handler = None
@@ -102,6 +126,7 @@ def get_retrieval_service(
         repository=repository,
         semantic_retriever=semantic_retriever,
         semantic_failure_handler=(semantic_failure_handler),
+        metrics=metrics,
         minimum_score=(settings.retrieval_minimum_score),
         maximum_results=(settings.retrieval_maximum_results),
         lexical_weight=(settings.lexical_retrieval_weight),

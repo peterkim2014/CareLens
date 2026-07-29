@@ -23,6 +23,7 @@ from app.ai.retrieval.scoring import (
 from app.ai.retrieval.semantic.protocol import (
     SemanticRetriever,
 )
+from app.core.metrics import RetrievalMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ class RetrievalService:
         lexical_weight: float = 1.0,
         semantic_weight: float = 1.0,
         semantic_failure_handler: (SemanticFailureHandler | None) = None,
+        metrics: RetrievalMetrics | None = None,
     ) -> None:
         if not 0.0 <= minimum_score <= 1.0:
             raise ValueError(
@@ -75,11 +77,14 @@ class RetrievalService:
         self._lexical_weight = lexical_weight
         self._semantic_weight = semantic_weight
         self._semantic_failure_handler = semantic_failure_handler
+        self._metrics = metrics or RetrievalMetrics()
 
     def retrieve(
         self,
         query: str,
     ) -> RetrievalResult:
+        self._metrics.record_request()
+
         documents = self._repository.list_documents()
 
         lexical_evidence = self._retrieve_lexically(
@@ -94,13 +99,18 @@ class RetrievalService:
                 lexical_evidence=lexical_evidence,
             )
 
+        self._metrics.record_semantic_attempt()
+
         try:
-            return self._retrieve_hybrid(
+            result = self._retrieve_hybrid(
                 query=query,
                 documents=documents,
                 lexical_evidence=lexical_evidence,
             )
         except Exception as error:
+            self._metrics.record_semantic_failure()
+            self._metrics.record_lexical_fallback()
+
             self._handle_semantic_failure(
                 error,
             )
@@ -110,6 +120,10 @@ class RetrievalService:
                 documents=documents,
                 lexical_evidence=lexical_evidence,
             )
+
+        self._metrics.record_semantic_success()
+
+        return result
 
     def _retrieve_lexically(
         self,
@@ -237,7 +251,7 @@ class RetrievalService:
         logger.exception(
             "Semantic retrieval failed; falling back to lexical retrieval",
             extra={
-                "event": ("semantic_retrieval_failed"),
+                "event": "semantic_retrieval_failed",
                 "error_type": type(
                     error,
                 ).__name__,

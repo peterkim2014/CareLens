@@ -32,6 +32,7 @@ from app.core.errors import (
     AnalysisPipelineError,
     handle_analysis_pipeline_error,
 )
+from app.core.metrics import RetrievalMetrics
 from app.core.telemetry import (
     TraceCorrelationMiddleware,
     configure_logging,
@@ -48,6 +49,7 @@ async def lifespan(
 ) -> AsyncIterator[None]:
     settings = get_settings()
 
+    application.state.retrieval_metrics = RetrievalMetrics()
     application.state.semantic_runtime = None
 
     logger.info(
@@ -81,6 +83,7 @@ async def lifespan(
                     recovery_cooldown_seconds=(
                         settings.semantic_recovery_cooldown_seconds
                     ),
+                    metrics=(application.state.retrieval_metrics),
                 )
 
                 application.state.semantic_runtime = semantic_runtime

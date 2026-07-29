@@ -16,11 +16,13 @@ from app.ai.retrieval.semantic.schemas import (
     SemanticSearchResult,
 )
 from app.api.dependencies.retrieval import (
+    get_retrieval_metrics,
     get_retrieval_service,
     get_semantic_runtime,
     recover_semantic_runtime,
 )
 from app.core.config import Settings
+from app.core.metrics import RetrievalMetrics
 
 
 def create_request(
@@ -63,9 +65,9 @@ def create_semantic_runtime(
     vector_repository = InMemoryVectorRepository()
 
     indexing_service = SemanticIndexingService(
-        evidence_repository=(evidence_repository),
+        evidence_repository=evidence_repository,
         embedder=embedder,
-        vector_repository=(vector_repository),
+        vector_repository=vector_repository,
     )
 
     retrieval_service = SemanticRetrievalService(
@@ -78,13 +80,48 @@ def create_semantic_runtime(
         vector_repository=vector_repository,
         retrieval_service=retrieval_service,
         indexing_service=indexing_service,
-        recovery_cooldown_seconds=recovery_cooldown_seconds,
+        recovery_cooldown_seconds=(recovery_cooldown_seconds),
     )
 
     if available:
         runtime.synchronize_index()
 
     return runtime
+
+
+def test_get_retrieval_metrics_creates_metrics_when_missing() -> None:
+    application = FastAPI()
+
+    request = create_request(
+        application,
+    )
+
+    metrics = get_retrieval_metrics(
+        request,
+    )
+
+    assert isinstance(
+        metrics,
+        RetrievalMetrics,
+    )
+    assert application.state.retrieval_metrics is metrics
+
+
+def test_get_retrieval_metrics_returns_existing_metrics() -> None:
+    application = FastAPI()
+    metrics = RetrievalMetrics()
+
+    application.state.retrieval_metrics = metrics
+
+    request = create_request(
+        application,
+    )
+
+    result = get_retrieval_metrics(
+        request,
+    )
+
+    assert result is metrics
 
 
 def test_get_semantic_runtime_returns_none_when_missing() -> None:
@@ -145,10 +182,13 @@ def test_retrieval_service_builds_without_semantic_runtime() -> None:
         semantic_retrieval_enabled=False,
     )
 
+    metrics = RetrievalMetrics()
+
     service = get_retrieval_service(
         repository=repository,
         settings=settings,
         semantic_runtime=None,
+        metrics=metrics,
     )
 
     assert service is not None
@@ -171,6 +211,7 @@ def test_retrieval_service_builds_with_available_semantic_runtime() -> None:
         repository=repository,
         settings=settings,
         semantic_runtime=runtime,
+        metrics=runtime.metrics,
     )
 
     assert service is not None
@@ -199,6 +240,7 @@ def test_retrieval_service_builds_with_unavailable_semantic_runtime() -> None:
         repository=repository,
         settings=settings,
         semantic_runtime=runtime,
+        metrics=runtime.metrics,
     )
 
     assert service is not None
@@ -241,16 +283,23 @@ def test_request_time_semantic_failure_marks_runtime_unavailable(
         repository=repository,
         settings=settings,
         semantic_runtime=runtime,
+        metrics=runtime.metrics,
     )
 
     result = service.retrieve(
         "allergy symptoms",
     )
 
+    snapshot = runtime.metrics.snapshot()
+
     assert result.evidence == []
     assert runtime.is_available is False
     assert runtime.indexing_result is None
     assert runtime.startup_error == ("provider unavailable")
+    assert snapshot.total_requests == 1
+    assert snapshot.semantic_attempts == 1
+    assert snapshot.semantic_failures == 1
+    assert snapshot.lexical_fallbacks == 1
 
 
 def test_retrieval_dependency_recovers_semantic_runtime(
@@ -295,6 +344,7 @@ def test_retrieval_dependency_recovers_semantic_runtime(
         repository=repository,
         settings=settings,
         semantic_runtime=recovered_runtime,
+        metrics=runtime.metrics,
     )
 
     assert recovery_attempted is True

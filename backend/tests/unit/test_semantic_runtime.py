@@ -128,10 +128,18 @@ def test_attempt_recovery_restores_runtime() -> None:
 
     recovered = runtime.attempt_recovery()
 
+    snapshot = runtime.metrics.snapshot()
+
     assert recovered is True
     assert runtime.is_available is True
     assert runtime.startup_error is None
     assert runtime.last_recovery_attempt_at is not None
+    assert snapshot.recovery_attempts == 1
+    assert snapshot.recovery_successes == 1
+    assert snapshot.recovery_failures == 0
+    assert snapshot.index_synchronizations == 1
+    assert snapshot.index_synchronization_successes == 1
+    assert snapshot.index_synchronization_failures == 0
 
 
 def test_failed_recovery_keeps_runtime_unavailable(
@@ -160,13 +168,23 @@ def test_failed_recovery_keeps_runtime_unavailable(
 
     recovered = runtime.attempt_recovery()
 
+    snapshot = runtime.metrics.snapshot()
+
     assert recovered is False
     assert runtime.is_available is False
     assert runtime.startup_error == ("still unavailable")
+    assert snapshot.recovery_attempts == 1
+    assert snapshot.recovery_successes == 0
+    assert snapshot.recovery_failures == 1
+    assert snapshot.index_synchronizations == 1
+    assert snapshot.index_synchronization_successes == 0
+    assert snapshot.index_synchronization_failures == 1
 
 
 def test_build_semantic_runtime_does_not_index_immediately() -> None:
     runtime = create_runtime()
+
+    snapshot = runtime.metrics.snapshot()
 
     assert isinstance(
         runtime,
@@ -176,12 +194,15 @@ def test_build_semantic_runtime_does_not_index_immediately() -> None:
     assert runtime.indexing_result is None
     assert runtime.startup_error is None
     assert runtime.vector_repository.count() == 0
+    assert snapshot.index_synchronizations == 0
 
 
 def test_semantic_runtime_synchronizes_index() -> None:
     runtime = create_runtime()
 
     indexing_result = runtime.synchronize_index()
+
+    snapshot = runtime.metrics.snapshot()
 
     assert runtime.is_available is True
     assert runtime.startup_error is None
@@ -190,6 +211,13 @@ def test_semantic_runtime_synchronizes_index() -> None:
     assert indexing_result.indexed_documents == 2
     assert indexing_result.skipped_documents == 0
     assert runtime.vector_repository.count() == 2
+
+    assert snapshot.index_synchronizations == 1
+    assert snapshot.index_synchronization_successes == 1
+    assert snapshot.index_synchronization_failures == 0
+    assert snapshot.latest_indexing_duration_seconds is not None
+    assert snapshot.latest_indexing_duration_seconds >= 0.0
+    assert snapshot.total_indexing_duration_seconds >= 0.0
 
 
 def test_semantic_runtime_can_retrieve_indexed_document() -> None:
@@ -203,7 +231,7 @@ def test_semantic_runtime_can_retrieve_indexed_document() -> None:
     )
 
     assert len(results) == 1
-    assert results[0].document_id == "allergy-001"
+    assert results[0].document_id == ("allergy-001")
 
 
 def test_semantic_runtime_marks_itself_available() -> None:
@@ -258,7 +286,13 @@ def test_synchronize_index_marks_runtime_unavailable_on_failure(
     ):
         runtime.synchronize_index()
 
+    snapshot = runtime.metrics.snapshot()
+
     assert runtime.is_available is False
     assert runtime.indexing_result is None
     assert runtime.startup_error == ("index unavailable")
     assert runtime.last_failure_at is not None
+    assert snapshot.index_synchronizations == 1
+    assert snapshot.index_synchronization_successes == 0
+    assert snapshot.index_synchronization_failures == 1
+    assert snapshot.latest_indexing_duration_seconds is not None
