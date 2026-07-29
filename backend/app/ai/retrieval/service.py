@@ -1,3 +1,6 @@
+import logging
+from collections.abc import Callable
+
 from app.ai.retrieval.fusion import (
     reciprocal_rank_fusion,
 )
@@ -21,6 +24,13 @@ from app.ai.retrieval.semantic.protocol import (
     SemanticRetriever,
 )
 
+logger = logging.getLogger(__name__)
+
+SemanticFailureHandler = Callable[
+    [Exception],
+    None,
+]
+
 
 class RetrievalService:
     def __init__(
@@ -31,6 +41,7 @@ class RetrievalService:
         semantic_retriever: SemanticRetriever | None = None,
         lexical_weight: float = 1.0,
         semantic_weight: float = 1.0,
+        semantic_failure_handler: (SemanticFailureHandler | None) = None,
     ) -> None:
         if not 0.0 <= minimum_score <= 1.0:
             raise ValueError(
@@ -63,6 +74,7 @@ class RetrievalService:
         self._semantic_retriever = semantic_retriever
         self._lexical_weight = lexical_weight
         self._semantic_weight = semantic_weight
+        self._semantic_failure_handler = semantic_failure_handler
 
     def retrieve(
         self,
@@ -76,17 +88,28 @@ class RetrievalService:
         )
 
         if self._semantic_retriever is None:
-            return RetrievalResult(
+            return self._build_lexical_result(
                 query=query,
-                total_candidates=len(documents),
-                evidence=lexical_evidence[: self._maximum_results],
+                documents=documents,
+                lexical_evidence=lexical_evidence,
             )
 
-        return self._retrieve_hybrid(
-            query=query,
-            documents=documents,
-            lexical_evidence=lexical_evidence,
-        )
+        try:
+            return self._retrieve_hybrid(
+                query=query,
+                documents=documents,
+                lexical_evidence=lexical_evidence,
+            )
+        except Exception as error:
+            self._handle_semantic_failure(
+                error,
+            )
+
+            return self._build_lexical_result(
+                query=query,
+                documents=documents,
+                lexical_evidence=lexical_evidence,
+            )
 
     def _retrieve_lexically(
         self,
@@ -205,6 +228,48 @@ class RetrievalService:
             query=query,
             total_candidates=len(documents),
             evidence=evidence,
+        )
+
+    def _handle_semantic_failure(
+        self,
+        error: Exception,
+    ) -> None:
+        logger.exception(
+            "Semantic retrieval failed; falling back to lexical retrieval",
+            extra={
+                "event": ("semantic_retrieval_failed"),
+                "error_type": type(
+                    error,
+                ).__name__,
+            },
+        )
+
+        if self._semantic_failure_handler is None:
+            return
+
+        try:
+            self._semantic_failure_handler(
+                error,
+            )
+        except Exception:
+            logger.exception(
+                "Semantic failure handler failed",
+                extra={
+                    "event": ("semantic_failure_handler_failed"),
+                },
+            )
+
+    def _build_lexical_result(
+        self,
+        *,
+        query: str,
+        documents: list[EvidenceDocument],
+        lexical_evidence: list[RetrievedEvidence],
+    ) -> RetrievalResult:
+        return RetrievalResult(
+            query=query,
+            total_candidates=len(documents),
+            evidence=lexical_evidence[: self._maximum_results],
         )
 
     @staticmethod

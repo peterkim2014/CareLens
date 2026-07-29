@@ -1,4 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from threading import Lock
 
 from app.ai.retrieval.repository_protocol import (
     EvidenceRepository,
@@ -20,13 +22,112 @@ from app.ai.retrieval.semantic.service import (
 )
 
 
-@dataclass(frozen=True)
+@dataclass
 class SemanticRuntime:
     embedder: Embedder
     vector_repository: VectorRepository
     retrieval_service: SemanticRetrievalService
     indexing_service: SemanticIndexingService
-    indexing_result: SemanticIndexingResult
+    indexing_result: SemanticIndexingResult | None = None
+    is_available: bool = False
+    startup_error: str | None = None
+    recovery_cooldown_seconds: float = 60.0
+    last_failure_at: datetime | None = None
+    last_recovery_attempt_at: datetime | None = None
+
+    _recovery_lock: Lock = field(
+        default_factory=Lock,
+        init=False,
+        repr=False,
+    )
+
+    def synchronize_index(
+        self,
+    ) -> SemanticIndexingResult:
+        try:
+            indexing_result = self.indexing_service.rebuild_index()
+        except Exception as error:
+            self.mark_unavailable(
+                error,
+            )
+            raise
+
+        self.mark_available(
+            indexing_result,
+        )
+
+        return indexing_result
+
+    def mark_available(
+        self,
+        indexing_result: SemanticIndexingResult,
+    ) -> None:
+        self.indexing_result = indexing_result
+        self.is_available = True
+        self.startup_error = None
+        self.last_failure_at = None
+
+    def mark_unavailable(
+        self,
+        error: Exception | str,
+    ) -> None:
+        self.is_available = False
+        self.indexing_result = None
+        self.startup_error = str(error)
+        self.last_failure_at = datetime.now(
+            UTC,
+        )
+
+    def should_attempt_recovery(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        if self.is_available:
+            return False
+
+        if self.last_failure_at is None:
+            return True
+
+        current_time = now or datetime.now(
+            UTC,
+        )
+
+        cooldown = timedelta(
+            seconds=self.recovery_cooldown_seconds,
+        )
+
+        return current_time >= (self.last_failure_at + cooldown)
+
+    def attempt_recovery(
+        self,
+    ) -> bool:
+        if not self.should_attempt_recovery():
+            return False
+
+        acquired = self._recovery_lock.acquire(
+            blocking=False,
+        )
+
+        if not acquired:
+            return False
+
+        try:
+            if not self.should_attempt_recovery():
+                return False
+
+            self.last_recovery_attempt_at = datetime.now(
+                UTC,
+            )
+
+            try:
+                self.synchronize_index()
+            except Exception:
+                return False
+
+            return self.is_available
+        finally:
+            self._recovery_lock.release()
 
 
 def build_semantic_runtime(
@@ -35,6 +136,7 @@ def build_semantic_runtime(
     embedder: Embedder,
     vector_repository: VectorRepository,
     batch_size: int = 100,
+    recovery_cooldown_seconds: float = 60.0,
 ) -> SemanticRuntime:
     indexing_service = SemanticIndexingService(
         evidence_repository=evidence_repository,
@@ -42,8 +144,6 @@ def build_semantic_runtime(
         vector_repository=vector_repository,
         batch_size=batch_size,
     )
-
-    indexing_result = indexing_service.rebuild_index()
 
     retrieval_service = SemanticRetrievalService(
         embedder=embedder,
@@ -55,5 +155,5 @@ def build_semantic_runtime(
         vector_repository=vector_repository,
         retrieval_service=retrieval_service,
         indexing_service=indexing_service,
-        indexing_result=indexing_result,
+        recovery_cooldown_seconds=(recovery_cooldown_seconds),
     )

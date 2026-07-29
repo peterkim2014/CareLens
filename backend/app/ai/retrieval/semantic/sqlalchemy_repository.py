@@ -186,7 +186,9 @@ class SQLAlchemyVectorRepository:
         limit: int,
     ) -> list[SemanticSearchResult]:
         if limit < 1:
-            return []
+            raise ValueError(
+                "limit must be at least 1.",
+            )
 
         cosine_distance = EvidenceEmbeddingModel.embedding.cosine_distance(
             query_embedding,

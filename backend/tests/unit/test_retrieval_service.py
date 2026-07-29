@@ -8,6 +8,27 @@ from app.ai.retrieval.semantic.schemas import (
 )
 
 
+class FailingSemanticRetriever:
+    def __init__(
+        self,
+        error: Exception,
+    ) -> None:
+        self._error = error
+        self.received_query: str | None = None
+        self.received_limit: int | None = None
+
+    def retrieve(
+        self,
+        query: str,
+        *,
+        limit: int,
+    ) -> list[SemanticSearchResult]:
+        self.received_query = query
+        self.received_limit = limit
+
+        raise self._error
+
+
 class FakeSemanticRetriever:
     def __init__(
         self,
@@ -57,6 +78,128 @@ def create_service() -> RetrievalService:
         minimum_score=0.1,
         maximum_results=5,
     )
+
+
+def test_semantic_failure_falls_back_to_lexical_retrieval() -> None:
+    repository = InMemoryEvidenceRepository(
+        documents=[
+            EvidenceDocument(
+                document_id="allergy-001",
+                title="Seasonal allergies",
+                content=("Seasonal allergies may cause sneezing and itchy eyes."),
+                source="Reference",
+                source_type="reviewed_evidence",
+            ),
+            EvidenceDocument(
+                document_id="sleep-001",
+                title="Sleep hygiene",
+                content=("Maintain a consistent sleep schedule."),
+                source="Reference",
+                source_type="reviewed_evidence",
+            ),
+        ]
+    )
+
+    semantic_retriever = FailingSemanticRetriever(
+        RuntimeError(
+            "provider unavailable",
+        )
+    )
+
+    service = RetrievalService(
+        repository=repository,
+        semantic_retriever=semantic_retriever,
+    )
+
+    result = service.retrieve(
+        "seasonal allergies sneezing",
+    )
+
+    assert result.total_candidates == 2
+    assert len(result.evidence) == 1
+    assert result.evidence[0].document_id == ("allergy-001")
+    assert "seasonal" in (result.evidence[0].matched_terms)
+    assert semantic_retriever.received_query == ("seasonal allergies sneezing")
+    assert semantic_retriever.received_limit == 5
+
+
+def test_semantic_failure_calls_failure_handler() -> None:
+    repository = InMemoryEvidenceRepository(
+        documents=[
+            EvidenceDocument(
+                document_id="allergy-001",
+                title="Seasonal allergies",
+                content=("Seasonal allergies may cause sneezing."),
+                source="Reference",
+                source_type="reviewed_evidence",
+            ),
+        ]
+    )
+
+    semantic_error = RuntimeError(
+        "database unavailable",
+    )
+
+    received_errors: list[Exception] = []
+
+    service = RetrievalService(
+        repository=repository,
+        semantic_retriever=(
+            FailingSemanticRetriever(
+                semantic_error,
+            )
+        ),
+        semantic_failure_handler=(received_errors.append),
+    )
+
+    result = service.retrieve(
+        "seasonal allergies",
+    )
+
+    assert len(result.evidence) == 1
+    assert received_errors == [
+        semantic_error,
+    ]
+
+
+def test_failure_handler_error_does_not_break_lexical_fallback() -> None:
+    repository = InMemoryEvidenceRepository(
+        documents=[
+            EvidenceDocument(
+                document_id="allergy-001",
+                title="Seasonal allergies",
+                content=("Seasonal allergies may cause sneezing."),
+                source="Reference",
+                source_type="reviewed_evidence",
+            ),
+        ]
+    )
+
+    def fail_handler(
+        _: Exception,
+    ) -> None:
+        raise RuntimeError(
+            "handler failed",
+        )
+
+    service = RetrievalService(
+        repository=repository,
+        semantic_retriever=(
+            FailingSemanticRetriever(
+                RuntimeError(
+                    "semantic failure",
+                )
+            )
+        ),
+        semantic_failure_handler=fail_handler,
+    )
+
+    result = service.retrieve(
+        "seasonal allergies",
+    )
+
+    assert len(result.evidence) == 1
+    assert result.evidence[0].document_id == ("allergy-001")
 
 
 def test_hybrid_retrieval_includes_semantic_match() -> None:

@@ -1,14 +1,15 @@
 from typing import Annotated
 
-from fastapi import Depends, Request, HTTPException, status
+from fastapi import Depends
+from starlette.requests import Request
 
-from app.ai.retrieval.repository_protocol import (
+from app.ai.retrieval import (
     EvidenceRepository,
+    RetrievalService,
 )
-from app.ai.retrieval.semantic.runtime import (
+from app.ai.retrieval.semantic import (
     SemanticRuntime,
 )
-from app.ai.retrieval.service import RetrievalService
 from app.ai.retrieval.sqlalchemy_repository import (
     SQLAlchemyEvidenceRepository,
 )
@@ -34,25 +35,21 @@ EvidenceRepositoryDependency = Annotated[
     Depends(get_evidence_repository),
 ]
 
+
 SettingsDependency = Annotated[
     Settings,
     Depends(get_settings),
 ]
 
 
-
 def get_semantic_runtime(
     request: Request,
-) -> SemanticRuntime:
-    runtime = request.app.state.semantic_runtime
-
-    if not runtime.is_available:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Semantic retrieval is temporarily unavailable."
-            ),
-        )
+) -> SemanticRuntime | None:
+    runtime: SemanticRuntime | None = getattr(
+        request.app.state,
+        "semantic_runtime",
+        None,
+    )
 
     return runtime
 
@@ -63,20 +60,49 @@ SemanticRuntimeDependency = Annotated[
 ]
 
 
+def recover_semantic_runtime(
+    semantic_runtime: SemanticRuntimeDependency,
+    settings: SettingsDependency,
+) -> SemanticRuntime | None:
+    if (
+        not settings.semantic_retrieval_enabled
+        or semantic_runtime is None
+        or semantic_runtime.is_available
+    ):
+        return semantic_runtime
+
+    semantic_runtime.attempt_recovery()
+
+    return semantic_runtime
+
+
+RecoveredSemanticRuntimeDependency = Annotated[
+    SemanticRuntime | None,
+    Depends(recover_semantic_runtime),
+]
+
+
 def get_retrieval_service(
     repository: EvidenceRepositoryDependency,
     settings: SettingsDependency,
-    semantic_runtime: SemanticRuntimeDependency,
+    semantic_runtime: RecoveredSemanticRuntimeDependency,
 ) -> RetrievalService:
     semantic_retriever = None
+    semantic_failure_handler = None
 
-    if settings.semantic_retrieval_enabled and semantic_runtime is not None:
+    if (
+        settings.semantic_retrieval_enabled
+        and semantic_runtime is not None
+        and semantic_runtime.is_available
+    ):
         semantic_retriever = semantic_runtime.retrieval_service
+        semantic_failure_handler = semantic_runtime.mark_unavailable
 
     return RetrievalService(
         repository=repository,
         semantic_retriever=semantic_retriever,
-        minimum_score=settings.retrieval_minimum_score,
+        semantic_failure_handler=(semantic_failure_handler),
+        minimum_score=(settings.retrieval_minimum_score),
         maximum_results=(settings.retrieval_maximum_results),
         lexical_weight=(settings.lexical_retrieval_weight),
         semantic_weight=(settings.semantic_retrieval_weight),

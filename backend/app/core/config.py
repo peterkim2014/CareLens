@@ -37,7 +37,21 @@ class Settings(BaseSettings):
         ge=1,
     )
 
+    lexical_retrieval_weight: float = Field(
+        default=1.0,
+        ge=0.0,
+    )
+    semantic_retrieval_weight: float = Field(
+        default=1.0,
+        ge=0.0,
+    )
+
     semantic_retrieval_enabled: bool = False
+
+    semantic_recovery_cooldown_seconds: float = Field(
+        default=60.0,
+        ge=0.0,
+    )
 
     semantic_embedding_provider: Literal[
         "hashing",
@@ -67,15 +81,6 @@ class Settings(BaseSettings):
         default=2,
         ge=0,
         le=10,
-    )
-
-    lexical_retrieval_weight: float = Field(
-        default=1.0,
-        ge=0.0,
-    )
-    semantic_retrieval_weight: float = Field(
-        default=1.0,
-        ge=0.0,
     )
 
     model_config = SettingsConfigDict(

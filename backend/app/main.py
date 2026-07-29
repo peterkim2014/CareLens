@@ -13,13 +13,11 @@ from fastapi.exceptions import (
 )
 from fastapi.responses import JSONResponse
 
-from app.ai.retrieval.semantic.errors import (
-    EmbeddingError,
-)
 from app.ai.retrieval.semantic.factory import (
     create_embedder,
 )
 from app.ai.retrieval.semantic.runtime import (
+    SemanticRuntime,
     build_semantic_runtime,
 )
 from app.ai.retrieval.semantic.sqlalchemy_repository import (
@@ -60,8 +58,8 @@ async def lifespan(
         },
     )
 
-    try:
-        if settings.semantic_retrieval_enabled:
+    if settings.semantic_retrieval_enabled:
+        try:
             with SessionFactory() as session:
                 evidence_repository = SQLAlchemyEvidenceRepository(
                     session=session,
@@ -71,38 +69,28 @@ async def lifespan(
                     session_factory=SessionFactory,
                 )
 
-                try:
-                    embedder = create_embedder(
-                        settings,
-                    )
+                embedder = create_embedder(
+                    settings,
+                )
 
-                    semantic_runtime = build_semantic_runtime(
-                        evidence_repository,
-                        embedder=embedder,
-                        vector_repository=(vector_repository),
-                        batch_size=(settings.semantic_embedding_batch_size),
-                    )
-                except EmbeddingError:
-                    logger.exception(
-                        "Semantic retrieval startup failed",
-                        extra={
-                            "event": ("semantic_index_startup_failed"),
-                            "embedding_provider": (
-                                settings.semantic_embedding_provider
-                            ),
-                            "embedding_model": (settings.openai_embedding_model),
-                        },
-                    )
-                    raise
+                semantic_runtime = build_semantic_runtime(
+                    evidence_repository,
+                    embedder=embedder,
+                    vector_repository=vector_repository,
+                    batch_size=(settings.semantic_embedding_batch_size),
+                    recovery_cooldown_seconds=(
+                        settings.semantic_recovery_cooldown_seconds
+                    ),
+                )
 
                 application.state.semantic_runtime = semantic_runtime
 
-                indexing_result = semantic_runtime.indexing_result
+                indexing_result = semantic_runtime.synchronize_index()
 
                 logger.info(
-                    "Semantic retrieval index built",
+                    "Semantic retrieval index synchronized",
                     extra={
-                        "event": "semantic_index_built",
+                        "event": ("semantic_index_synchronized"),
                         "total_documents": (indexing_result.total_documents),
                         "indexed_documents": (indexing_result.indexed_documents),
                         "skipped_documents": (indexing_result.skipped_documents),
@@ -120,7 +108,33 @@ async def lifespan(
                         ),
                     },
                 )
+        except Exception as error:
+            failed_runtime: SemanticRuntime | None = getattr(
+                application.state,
+                "semantic_runtime",
+                None,
+            )
 
+            if failed_runtime is not None:
+                failed_runtime.mark_unavailable(
+                    error,
+                )
+
+            logger.exception(
+                "Semantic retrieval initialization "
+                "failed; application will continue "
+                "with lexical retrieval",
+                extra={
+                    "event": ("semantic_index_startup_failed"),
+                    "error_type": type(
+                        error,
+                    ).__name__,
+                    "embedding_provider": (settings.semantic_embedding_provider),
+                    "embedding_model": (settings.openai_embedding_model),
+                },
+            )
+
+    try:
         yield
     finally:
         application.state.semantic_runtime = None
