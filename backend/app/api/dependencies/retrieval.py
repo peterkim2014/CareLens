@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends, Request, HTTPException, status
 
 from app.ai.retrieval.repository_protocol import (
     EvidenceRepository,
@@ -40,24 +40,18 @@ SettingsDependency = Annotated[
 ]
 
 
+
 def get_semantic_runtime(
     request: Request,
-) -> SemanticRuntime | None:
-    runtime = getattr(
-        request.app.state,
-        "semantic_runtime",
-        None,
-    )
+) -> SemanticRuntime:
+    runtime = request.app.state.semantic_runtime
 
-    if runtime is None:
-        return None
-
-    if not isinstance(
-        runtime,
-        SemanticRuntime,
-    ):
-        raise RuntimeError(
-            "Application semantic runtime has an invalid type.",
+    if not runtime.is_available:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Semantic retrieval is temporarily unavailable."
+            ),
         )
 
     return runtime
