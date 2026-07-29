@@ -168,8 +168,11 @@ def test_prometheus_metrics_does_not_expose_sensitive_data(
     assert "exception_message" not in body
     assert "patient_name" not in body
     assert "provider unavailable" not in body
-    assert "{" not in body
-    assert "}" not in body
+    assert "query_text" not in body
+    assert "exception_message" not in body
+    assert "patient_name" not in body
+    assert "provider unavailable" not in body
+    assert "__traceback__" not in body
 
 
 def test_prometheus_metrics_ends_with_newline(

@@ -4,6 +4,12 @@ from app.core.telemetry.context import (
     reset_trace_id,
     set_trace_id,
 )
+from app.core.telemetry.http_metrics import (
+    HTTPMetrics,
+    HTTPMetricsSnapshot,
+    HTTPRequestCountSnapshot,
+    HTTPRequestDurationSnapshot,
+)
 from app.core.telemetry.logging import (
     StructuredJSONFormatter,
     configure_logging,
@@ -15,6 +21,10 @@ from app.core.telemetry.middleware import (
 
 __all__ = [
     "TRACE_HEADER",
+    "HTTPMetrics",
+    "HTTPMetricsSnapshot",
+    "HTTPRequestCountSnapshot",
+    "HTTPRequestDurationSnapshot",
     "StructuredJSONFormatter",
     "TraceCorrelationMiddleware",
     "configure_logging",

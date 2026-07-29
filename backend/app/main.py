@@ -37,6 +37,7 @@ from app.core.errors import (
 )
 from app.core.metrics import RetrievalMetrics
 from app.core.telemetry import (
+    HTTPMetrics,
     TraceCorrelationMiddleware,
     configure_logging,
     get_trace_id,
@@ -53,6 +54,7 @@ async def lifespan(
     settings = get_settings()
 
     application.state.retrieval_metrics = RetrievalMetrics()
+    application.state.http_metrics = HTTPMetrics()
     application.state.semantic_runtime = None
 
     logger.info(

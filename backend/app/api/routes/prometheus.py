@@ -8,6 +8,10 @@ from app.core.metrics import (
     RetrievalMetrics,
     RetrievalMetricsSnapshot,
 )
+from app.core.telemetry import (
+    HTTPMetrics,
+    HTTPMetricsSnapshot,
+)
 
 router = APIRouter()
 
@@ -22,18 +26,33 @@ PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 async def read_prometheus_metrics(
     request: Request,
 ) -> Response:
-    metrics: RetrievalMetrics | None = getattr(
+    retrieval_metrics: RetrievalMetrics | None = getattr(
         request.app.state,
         "retrieval_metrics",
         None,
     )
 
-    snapshot = (
-        metrics.snapshot() if metrics is not None else RetrievalMetrics().snapshot()
+    http_metrics: HTTPMetrics | None = getattr(
+        request.app.state,
+        "http_metrics",
+        None,
+    )
+
+    retrieval_snapshot = (
+        retrieval_metrics.snapshot()
+        if retrieval_metrics is not None
+        else RetrievalMetrics().snapshot()
+    )
+
+    http_snapshot = (
+        http_metrics.snapshot()
+        if http_metrics is not None
+        else HTTPMetrics().snapshot()
     )
 
     content = _build_prometheus_response(
-        snapshot,
+        retrieval_snapshot,
+        http_snapshot=http_snapshot,
     )
 
     return Response(
@@ -44,6 +63,8 @@ async def read_prometheus_metrics(
 
 def _build_prometheus_response(
     snapshot: RetrievalMetricsSnapshot,
+    *,
+    http_snapshot: HTTPMetricsSnapshot | None = None,
 ) -> str:
     semantic_success_ratio = _calculate_ratio(
         numerator=snapshot.semantic_successes,
@@ -182,7 +203,157 @@ def _build_prometheus_response(
         ),
     ]
 
+    if http_snapshot is not None:
+        lines.extend(
+            _build_http_metrics_lines(
+                http_snapshot,
+            )
+        )
+
     return "\n".join(lines) + "\n"
+
+
+def _build_http_metrics_lines(
+    snapshot: HTTPMetricsSnapshot,
+) -> list[str]:
+    lines = [
+        "# HELP carelens_http_requests_total Total completed HTTP requests.",
+        "# TYPE carelens_http_requests_total counter",
+    ]
+
+    for request_metric in snapshot.requests:
+        lines.append(
+            _labeled_metric_line(
+                "carelens_http_requests_total",
+                labels={
+                    "method": request_metric.method,
+                    "route": request_metric.route,
+                    "status_code": str(request_metric.status_code),
+                },
+                value=request_metric.count,
+            )
+        )
+
+    lines.extend(
+        [
+            "# HELP "
+            "carelens_http_request_duration_seconds_count "
+            "Number of measured HTTP request durations.",
+            "# TYPE carelens_http_request_duration_seconds_count counter",
+        ]
+    )
+
+    for duration_metric in snapshot.durations:
+        labels = {
+            "method": duration_metric.method,
+            "route": duration_metric.route,
+        }
+
+        lines.append(
+            _labeled_metric_line(
+                "carelens_http_request_duration_seconds_count",
+                labels=labels,
+                value=duration_metric.count,
+            )
+        )
+
+    lines.extend(
+        [
+            "# HELP "
+            "carelens_http_request_duration_seconds_sum "
+            "Total HTTP request duration in seconds.",
+            "# TYPE carelens_http_request_duration_seconds_sum counter",
+        ]
+    )
+
+    for duration_metric in snapshot.durations:
+        labels = {
+            "method": duration_metric.method,
+            "route": duration_metric.route,
+        }
+
+        lines.append(
+            _labeled_metric_line(
+                "carelens_http_request_duration_seconds_sum",
+                labels=labels,
+                value=(duration_metric.total_duration_seconds),
+            )
+        )
+
+    lines.extend(
+        [
+            "# HELP "
+            "carelens_http_request_duration_seconds_average "
+            "Average HTTP request duration in seconds.",
+            "# TYPE carelens_http_request_duration_seconds_average gauge",
+        ]
+    )
+
+    for duration_metric in snapshot.durations:
+        average_duration = _calculate_average(
+            total=(duration_metric.total_duration_seconds),
+            count=duration_metric.count,
+        )
+
+        lines.append(
+            _labeled_metric_line(
+                "carelens_http_request_duration_seconds_average",
+                labels={
+                    "method": duration_metric.method,
+                    "route": duration_metric.route,
+                },
+                value=average_duration,
+            )
+        )
+
+    lines.extend(
+        [
+            "# HELP carelens_http_requests_in_progress "
+            "Current number of HTTP requests in progress.",
+            "# TYPE carelens_http_requests_in_progress gauge",
+            _metric_line(
+                "carelens_http_requests_in_progress",
+                snapshot.requests_in_progress,
+            ),
+        ]
+    )
+
+    return lines
+
+
+def _labeled_metric_line(
+    name: str,
+    *,
+    labels: dict[str, str],
+    value: int | float,
+) -> str:
+    serialized_labels = ",".join(
+        f'{key}="{_escape_label_value(label_value)}"'
+        for key, label_value in sorted(
+            labels.items(),
+        )
+    )
+
+    return f"{name}{{{serialized_labels}}} {_format_metric_value(value)}"
+
+
+def _escape_label_value(
+    value: str,
+) -> str:
+    return (
+        value.replace(
+            "\\",
+            "\\\\",
+        )
+        .replace(
+            "\n",
+            "\\n",
+        )
+        .replace(
+            '"',
+            '\\"',
+        )
+    )
 
 
 def _metric_line(
