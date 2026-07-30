@@ -1,5 +1,5 @@
 import { AppShell } from "@/components/layout/app-shell";
-import { AnalysisForm } from "@/features/analysis/components/analysis-form";
+import { ClinicalCaseForm } from "@/features/analysis/components/clinical-case-form";
 import { getHealth } from "@/features/health/api/get-health";
 import { HealthOverview } from "@/features/health/components/health-overview";
 import type { HealthResponse } from "@/features/health/types/health";
@@ -53,12 +53,13 @@ export default async function Home() {
           </p>
 
           <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-            CareLens dashboard
+            CareLens
           </h1>
 
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-            Review backend availability and submit
-            clinical scenarios for grounded analysis.
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
+            Build a structured, de-identified clinical
+            case and receive evidence-grounded diagnostic
+            and management guidance.
           </p>
         </header>
 
@@ -84,7 +85,7 @@ export default async function Home() {
           </section>
         )}
 
-        <AnalysisForm />
+        <ClinicalCaseForm />
       </div>
     </AppShell>
   );
